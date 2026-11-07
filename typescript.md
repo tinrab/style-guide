@@ -10,7 +10,7 @@ The emphasis is code style: names, expressions, functions, types, modules, and m
 
 A project must record its runtime, module-resolution profile, tooling, and narrow integration conventions in a short addendum (section 25). The addendum must not silently weaken the core rules.
 
-Examples illustrate the rule under discussion and may omit surrounding declarations. Unless another profile is named, relative imports use the emitted-JavaScript convention from section 25.
+Examples illustrate the rule under discussion and may omit surrounding declarations. Unless another profile is named, imports use the package convention from section 25.
 
 Generated and vendored files are exempt from formatting and naming rules. Keep them clearly identified, regenerate them from source, and do not edit them to imitate handwritten style. Handwritten wrappers and integration code remain subject to this guide.
 
@@ -197,10 +197,10 @@ import { readFile } from "node:fs/promises";
 
 import { z } from "zod";
 
-import { createJob } from "./job.js";
-import type { Job, JobId } from "./job.js";
+import { createJob } from "./job";
+import type { Job, JobId } from "./job";
 
-export type { JobId } from "./job.js";
+export type { JobId } from "./job";
 ```
 
 Under `verbatimModuleSyntax`, a whole `import type` is erased, but a declaration of only inline `type` specifiers can leave an empty runtime import, so do not use that form for an entirely type-only dependency. [6]
@@ -213,17 +213,15 @@ Use `node:` for Node built-ins. Do not append extensions to bare package names.
 
 ### Paths and extensions
 
-Use relative imports for nearby code in the same package and package entry points across packages.
+Do not write extensions in TypeScript imports: `./read-config`, not `./read-config.ts` or `./read-config.js`. Do not enable `allowImportingTsExtensions` or `rewriteRelativeImportExtensions`. [22] Extensionless imports require `moduleResolution: "Bundler"` and a bundler or runner that resolves them (section 25). JSON and other asset imports still name their file, as in `./defaults.json`.
 
-Use an alias only when the checker, runtime, bundler, and tests all resolve it consistently. TypeScript's `paths` does not rewrite emitted imports. Prefer a supported package import/export mapping to an alias only the editor understands. [24]
+- **Applications** (TanStack Start, Next.js, other bundled apps): import first-party code through the `~/` alias for the source root, such as `import { loadPosts } from "~/server/blog/loader.server";`. A sibling in the same folder may use `./`; never use `../`. Use `~/`, not `@/` or `#/`, so aliases cannot be confused with scoped packages such as `@scope/pkg`.
+- **Packages and libraries:** use relative imports (`./utils/helper`, `../components/button`), never `~/` or another alias. TypeScript's `paths` does not rewrite emitted JavaScript or declarations, so consumers would receive unresolvable imports. [24]
+- **Monorepos:** import another workspace package by its package name through its `exports`, never through a relative path across package roots or an alias. Aliases stay inside one application.
 
-Choose exactly one relative-import convention per compilation unit (profiles in section 25):
+Map `~/*` to the source root in `tsconfig.json` `paths`, and ensure the checker, bundler, and tests all resolve it: Next.js reads `paths` natively, and Vite needs `resolve.tsconfigPaths: true`. [27][28] Never use an alias only the editor understands.
 
-- **Emitted JavaScript:** the emitted extension, usually `./read-config.js`.
-- **Bundled source:** explicit source extensions, such as `./read-config.ts` or `./account-menu.tsx`.
-- **Direct TypeScript execution:** the actual source extension, such as `./read-config.ts`.
-
-Do not use implicit directory imports. Write `./jobs/index.js` or its profile equivalent; Node ESM requires explicit relative extensions and directory indexes. [5]
+Do not use implicit directory imports. Write `./jobs/index` or `~/jobs/index` when the index itself is intended.
 
 A framework-generated import convention may be documented as an integration exception. Do not switch resolver modes merely to make a broken runtime import type-check.
 
@@ -231,8 +229,8 @@ A framework-generated import convention may be documented as an integration exce
 
 ```ts
 import defaultsJson from "./defaults.json" with { type: "json" };
-import { defaultsSchema } from "./defaults.schema.js";
-import type { Defaults } from "./defaults.schema.js";
+import { defaultsSchema } from "./defaults.schema";
+import type { Defaults } from "./defaults.schema";
 
 export const DEFAULTS: Readonly<Defaults> = defaultsSchema.parse(defaultsJson);
 
@@ -1079,19 +1077,19 @@ Enable `resolveJsonModule` where needed. For side-effect asset imports, use accu
 
 ### Select an ESM profile
 
-| Profile                              | Required module settings                                                                                 | Relative code imports             |
-| ------------------------------------ | -------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| TypeScript emits JavaScript for Node | `module: "NodeNext"`, `moduleResolution: "NodeNext"`                                                     | Emitted extensions, usually `.js` |
-| A bundler consumes TypeScript        | `module: "ESNext"`, `moduleResolution: "Bundler"`, `noEmit: true`, `allowImportingTsExtensions: true`    | Explicit `.ts` or `.tsx`          |
-| Node executes TypeScript directly    | `module: "NodeNext"`, `moduleResolution: "NodeNext"`, `noEmit: true`, `allowImportingTsExtensions: true` | Actual `.ts` or `.mts`            |
+Every profile uses `module: "ESNext"`, `moduleResolution: "Bundler"`, and `noEmit: true` for type checking, with extensionless imports (section 7):
 
-Verify the bundler's extension handling and dependency interoperability, and use explicit ESM package metadata. [3][7]
+| Profile                     | Additional settings                                         | First-party imports                            |
+| --------------------------- | ----------------------------------------------------------- | ---------------------------------------------- |
+| Application                 | `paths: { "~/*": ["./src/*"] }`                             | `~/`, or `./` for a sibling in the same folder |
+| Package or library          | None; a bundler builds JavaScript and declarations          | Relative                                       |
+| Script or tool run directly | None; run with a runner that resolves extensionless imports | Relative                                       |
 
-Emitted Node code imports `"./worker.js"` even when the source is `worker.ts`; direct TypeScript execution imports `"./worker.ts"`.
+Verify the bundler's dependency interoperability, and use explicit ESM package metadata. [3][7]
 
-A project that executes TypeScript source and also emits JavaScript may adopt `rewriteRelativeImportExtensions: true` as a documented build variation. It rewrites supported relative TypeScript extensions, not arbitrary aliases or package mappings. [22]
+A package must be built by a bundler. Plain `tsc` output keeps extensionless imports, which fail in Node with `ERR_MODULE_NOT_FOUND`. Its declarations must not contain extensionless relative imports either, because `NodeNext` consumers reject them (`TS2835`): bundle declarations per entry point, and test the package from both a `NodeNext` and a `Bundler` consumer.
 
-Do not use `moduleResolution: "Bundler"` for code that must run as unbundled Node output merely because it accepts more import forms.
+Run TypeScript directly with a runner that resolves extensionless imports, such as tsx. Node's built-in type stripping requires extensions.
 
 For a published package, verify the emitted JavaScript and declarations against intended consumers, and define public exports explicitly. A successful development bundle does not prove consumers can resolve the distributed package.
 
@@ -1139,3 +1137,5 @@ The prescriptions in this guide are project policy. Zod examples use the Zod 4 A
 24. [TypeScript module resolution and paths](https://www.typescriptlang.org/docs/handbook/modules/reference.html#paths-does-not-affect-emit)
 25. [V8 stack trace API](https://v8.dev/docs/stack-trace-api)
 26. [JavaScript Error constructor and cause](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/Error)
+27. [TanStack Start path aliases](https://tanstack.com/start/latest/docs/framework/react/guide/path-aliases)
+28. [Next.js absolute imports and module path aliases](https://nextjs.org/docs/app/getting-started/installation#set-up-absolute-imports-and-module-path-aliases)
